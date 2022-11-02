@@ -57,8 +57,11 @@ async def _get_puppet_from_cmd(evt: CommandEvent) -> pu.Puppet | None:
         )
         return None
 
-    puppet: pu.Puppet = await pu.Puppet.get_by_address(Address(number=phone))
-    if not puppet.uuid and evt.sender.username:
+    puppet: pu.Puppet = await pu.Puppet.get_by_number(phone)
+    if not puppet:
+        if not evt.sender.username:
+            await evt.reply("UUID of user not known")
+            return None
         try:
             uuid = await evt.bridge.signal.find_uuid(evt.sender.username, puppet.number)
         except UnregisteredUserError:
@@ -66,7 +69,10 @@ async def _get_puppet_from_cmd(evt: CommandEvent) -> pu.Puppet | None:
             return None
 
         if uuid:
-            await puppet.handle_uuid_receive(uuid)
+            puppet = await pu.Puppet.get_by_uuid(uuid)
+        else:
+            await evt.reply("UUID of user not found")
+            return None
     return puppet
 
 
@@ -99,9 +105,7 @@ async def pm(evt: CommandEvent) -> None:
     puppet = await _get_puppet_from_cmd(evt)
     if not puppet:
         return
-    portal = await po.Portal.get_by_chat_id(
-        puppet.address, receiver=evt.sender.username, create=True
-    )
+    portal = await po.Portal.get_by_chat_id(puppet.uuid, receiver=evt.sender.username, create=True)
     if portal.mxid:
         await evt.reply(
             f"You already have a private chat with {puppet.name}: "
@@ -172,7 +176,7 @@ async def safety_number(evt: CommandEvent) -> None:
             return
         evt.args = evt.args[1:]
     if len(evt.args) == 0 and evt.portal and evt.portal.is_direct:
-        puppet = await pu.Puppet.get_by_address(evt.portal.chat_id)
+        puppet = await evt.portal.get_dm_puppet()
     else:
         puppet = await _get_puppet_from_cmd(evt)
     if not puppet:
@@ -567,7 +571,7 @@ async def get_initial_state(
         except KeyError:
             # Some state event probably has empty content
             pass
-    return title, about, levels, encrypted, avatar_url
+    return title, about, levels, encrypted, avatar_url, join_rule
 
 
 async def warn_missing_power(levels: PowerLevelStateEventContent, evt: CommandEvent) -> None:
